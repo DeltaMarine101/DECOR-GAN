@@ -1,22 +1,40 @@
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ./data/03001627/ --input_size 32 --output_size 128 --ui --gpu 0
+
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --alpha 0.5 --beta 10.0 --input_size 32 --output_size 128 --train --gpu 0 --epoch 20
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content content_chair_train --data_style_dir ./data/03001627/ --data_content_dir ./data/03001627/ --alpha 0.5 --beta 10.0 --input_size 32 --output_size 128 --train --gpu 0 --epoch 20
+
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --alpha 0.5 --beta 10.0 --input_size 32 --output_size 128 --train --gpu 0 --epoch 20 --asymmetry
+
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --ui --gpu 0 --asymmetry
+
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_all --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --prepimgreal --gpu 0
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_test --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --prepimg --gpu 0
+
 import os
 import time
-import math
-import random
+# import math
+# import random
 import numpy as np
 import cv2
 from scipy.ndimage.filters import gaussian_filter
 from sklearn.manifold import TSNE
+from tqdm import tqdm
 
 import torch
-import torch.backends.cudnn as cudnn
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import optim
-from torch.autograd import Variable
+import tkinter as tk
+import tkinter.font as tkFont
+from PIL import Image, ImageTk
+from scipy.spatial import Delaunay
+# import torch.backends.cudnn as cudnn
+# import torch.nn as nn
+# from torch import optim
+# from torch.autograd import Variable
 
 
 from utils import *
 from modelAE_GD import *
+from ui_utils import *
 
 
 class IM_AE(object):
@@ -52,14 +70,17 @@ class IM_AE(object):
         self.sampling_threshold = 0.4
 
         self.render_view_id = 0
-        if self.asymmetry: self.render_view_id = 6 #render side view for motorbike
+        # if self.asymmetry: self.render_view_id = 6 #render side view for motorbike
         self.voxel_renderer = voxel_renderer(self.real_size)
 
         self.checkpoint_dir = config.checkpoint_dir
-        self.data_dir = config.data_dir
+        self.data_style_dir = config.data_style_dir
+        self.data_content_dir = config.data_content_dir
+        self.data_content_gt_dir = config.data_content_gt_dir
 
         self.data_style = config.data_style
         self.data_content = config.data_content
+        self.data_content_gt = config.data_content_gt
 
 
 
@@ -94,12 +115,17 @@ class IM_AE(object):
             self.pos_style = []
 
             if config.train:
-                for i in range(self.styleset_len):
-                    print("preprocessing style - "+str(i+1)+"/"+str(self.styleset_len))
+                print("preprocessing style - ")
+                for i in tqdm(range(self.styleset_len)):
                     if self.output_size==128:
-                        tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                        tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
                     elif self.output_size==256:
-                        tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                        tmp_raw = get_vox_from_binvox(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                    ##
+                    # with open(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox"), 'rb') as voxel_model_file:
+                    #   vox_model = binvox_rw.read_as_3d_array(voxel_model_file)
+                    # tmp_raw = vox_model.data.copy()
+                    ##
                     xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
                     tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
 
@@ -109,7 +135,7 @@ class IM_AE(object):
                     tmp_input, tmp_Dmask, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
                     self.input_style.append(tmp_input)
                     self.mask_style.append(tmp_mask)
-                    self.pos_style.append( [xmin,xmax,ymin,ymax,zmin,zmax] )
+                    self.pos_style.append([xmin,xmax,ymin,ymax,zmin,zmax])
 
                     img_y = i//4
                     img_x = (i%4)*2+1
@@ -137,10 +163,10 @@ class IM_AE(object):
         self.imgout_0 = np.full([self.real_size*4, self.real_size*4*2], 255, np.uint8)
 
         if os.path.exists("splits/"+self.data_content+".txt"):
-
             #load data
             fin = open("splits/"+self.data_content+".txt")
-            self.dataset_names = [name.strip() for name in fin.readlines()]
+            self.dataset_names = [name.strip() for name in fin.readlines()][:]
+            # print("splits/"+self.data_content+".txt", self.dataset_names)
             fin.close()
             self.dataset_len = len(self.dataset_names)
             self.mask_content  = []
@@ -149,12 +175,19 @@ class IM_AE(object):
             self.pos_content = []
 
             if config.train:
-                for i in range(self.dataset_len):
-                    print("preprocessing content - "+str(i+1)+"/"+str(self.dataset_len))
+                print("preprocessing content - ")
+                for i in tqdm(range(self.dataset_len)):                    
+                    ##
+                    # with open(os.path.join(self.data_content_dir,self.dataset_names[i]+"/model_depth_fusion.binvox"), 'rb') as voxel_model_file:
+                    #   vox_model = binvox_rw.read_as_3d_array(voxel_model_file)
+                    # tmp_raw = vox_model.data.copy()
+                    # tmp_raw = np.swapaxes(vox_model.data, 1, 2)[...,::-1,:].copy()
+                    ##
                     if self.output_size==128:
-                        tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                        tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
                     elif self.output_size==256:
-                        tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                        tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+
                     xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
                     tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
 
@@ -180,7 +213,7 @@ class IM_AE(object):
         
 
 
-
+        print("Building model...")
 
         #build model
         self.discriminator = discriminator(self.d_dim,self.styleset_len+1)
@@ -206,6 +239,8 @@ class IM_AE(object):
         self.checkpoint_name='IM_AE.model'
         self.checkpoint_manager_list = [None] * self.max_to_keep
         self.checkpoint_manager_pointer = 0
+
+        print("Done.")
 
 
     def get_style_voxel_Dmask(self,vox):
@@ -367,6 +402,7 @@ class IM_AE(object):
     def load(self):
         #load previous checkpoint
         checkpoint_txt = os.path.join(self.checkpoint_path, "checkpoint")
+        print("$$", checkpoint_txt)
         if os.path.exists(checkpoint_txt):
             fin = open(checkpoint_txt)
             model_dir = fin.readline().strip()
@@ -410,7 +446,8 @@ class IM_AE(object):
         return "{}_ae".format(self.data_style)
 
     def train(self, config):
-
+        # input("!")
+        print("Training...")
         #self.load()
 
         start_time = time.time()
@@ -425,7 +462,7 @@ class IM_AE(object):
             self.discriminator.train()
             self.generator.train()
 
-            for idx in range(self.dataset_len):
+            for idx in tqdm(range(self.dataset_len)):
                 #random a z vector for D training
                 z_vector = np.zeros([self.styleset_len],np.float32)
                 z_vector_style_idx = np.random.randint(self.styleset_len)
@@ -567,9 +604,9 @@ class IM_AE(object):
 
         for i in range(self.styleset_len):
             if self.output_size==128:
-                tmpvox = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmpvox = get_vox_from_binvox_1over2(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmpvox = get_vox_from_binvox(os.path.join(self.data_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmpvox = get_vox_from_binvox(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
             rendered_view = self.voxel_renderer.render_img_with_camera_pose_gpu(tmpvox, self.sampling_threshold)
 
             img_x = int(embedded[i,0])
@@ -635,9 +672,9 @@ class IM_AE(object):
         
         for i in range(self.dataset_len):
             if self.output_size==128:
-                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
             xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
             tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
 
@@ -689,9 +726,9 @@ class IM_AE(object):
         for style_id in range(self.styleset_len):
             print("preprocessing style - "+str(style_id+1)+"/"+str(self.styleset_len))
             if self.output_size==128:
-                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_style_dir,self.styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox(os.path.join(self.data_style_dir,self.styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
             tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
 
@@ -741,9 +778,9 @@ class IM_AE(object):
         for content_id in range(self.dataset_len):
             print("processing content - "+str(content_id+1)+"/"+str(self.dataset_len))
             if self.output_size==128:
-                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
             tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
             
@@ -807,9 +844,9 @@ class IM_AE(object):
         for content_id in range(self.dataset_len):
             print("processing content - "+str(content_id+1)+"/"+str(self.dataset_len))
             if self.output_size==128:
-                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
             tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
             tmp_input, tmp_Dmask, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
@@ -868,16 +905,15 @@ class IM_AE(object):
         for content_id in range(self.dataset_len):
             print("processing content - "+str(content_id+1)+"/"+str(self.dataset_len))
             if self.output_size==128:
-                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
             tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
             
             tmp_input, tmp_Dmask, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
             mask_fake  = torch.from_numpy(tmp_mask).to(self.device).unsqueeze(0).unsqueeze(0).float()
             input_fake = torch.from_numpy(tmp_input).to(self.device).unsqueeze(0).unsqueeze(0).float()
-
 
             tmpvoxlarger = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
             
@@ -918,11 +954,7 @@ class IM_AE(object):
                     cv2.imwrite(result_dir+"/"+str(content_id)+"_"+str(style_id)+"_"+str(sample_id)+".png", imgout)
 
 
-
-
-
     def render_real_for_eval(self, config):
-
         self.voxel_renderer.use_gpu()
 
         result_dir = "render_real_for_eval"
@@ -935,7 +967,7 @@ class IM_AE(object):
 
 
         #load all shapes
-        fin = open("splits/"+self.data_content+".txt")
+        fin = open("splits/"+self.data_content_gt+".txt")
         self.dataset_names = [name.strip() for name in fin.readlines()]
         fin.close()
         self.dataset_len = len(self.dataset_names)
@@ -944,9 +976,9 @@ class IM_AE(object):
         for content_id in range(self.dataset_len):
             print("processing content - "+str(content_id+1)+"/"+str(self.dataset_len))
             if self.output_size==128:
-                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_gt_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
             elif self.output_size==256:
-                tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+                tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_gt_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
 
             #tmp_raw = gaussian_filter(tmp_raw.astype(np.float32), sigma=1)
 
@@ -960,355 +992,298 @@ class IM_AE(object):
                 cv2.imwrite(result_dir+"/"+str(content_id)+"_"+str(sample_id)+".png", imgout)
 
 
-
-
-
+    # remade UI in tkinter because I'm not a psychopath
     def launch_ui(self, config):
-        from scipy.spatial import Delaunay
-
-        use_precomputed_tsne = False
-        self.sampling_threshold = 0.25
-
-        #Ubuntu python did not come with Tkinter and I was too lazy to install it.
-        #Therefore the entire UI is just a huge image.
-        UI_imgheight = 800
-        UI_height = 1000
-        UI_width = UI_imgheight+UI_height
-        UI_image_ = np.full([UI_height,UI_width,3], 255, np.uint8)
-
-        self.voxel_renderer.use_gpu()
-
-        if not self.load(): exit(-1)
-
-        style_codes = self.generator.style_codes.detach().cpu().numpy()
-        style_codes = (style_codes-np.mean(style_codes,axis=0))/np.std(style_codes,axis=0)
-
-
-        if not use_precomputed_tsne:
-            #compute
-            embedded = TSNE(n_components=2,perplexity=16,learning_rate=10.0,n_iter=2000).fit_transform(style_codes)
-            fout = open(config.sample_dir+"/"+"tsne_coords.txt", 'w')
-            for i in range(self.styleset_len):
-                fout.write( str(embedded[i,0])+"\t"+str(embedded[i,1])+"\n" )
-            fout.close()
-        else:
-            #load computed
-            embedded = np.zeros([self.styleset_len,2], np.float32)
-            fin = open(config.sample_dir+"/"+"tsne_coords.txt")
-            lines = fin.readlines()
-            fin.close()
-            for i in range(self.styleset_len):
-                line = lines[i].split()
-                embedded[i,0] = float(line[0])
-                embedded[i,1] = float(line[1])
-
-
-
-
-        if self.output_size==128:
-            img_size = 2048
-        elif self.output_size==256:
-            img_size = 4096
-        x_max = np.max(embedded[:,0])
-        x_min = np.min(embedded[:,0])
-        y_max = np.max(embedded[:,1])
-        y_min = np.min(embedded[:,1])
-        x_mid = (x_max+x_min)/2
-        y_mid = (y_max+y_min)/2
-        scalex = (x_max-x_min)*1.0
-        scaley = (y_max-y_min)*1.0
-        embedded[:,0] = ((embedded[:,0]-x_mid)/scalex+0.5)*img_size
-        embedded[:,1] = ((embedded[:,1]-y_mid)/scaley+0.5)*img_size
-
-
-        if not use_precomputed_tsne:
-            #render
-            print("rendering...")
-            plt = np.full([img_size+self.real_size,img_size+self.real_size],255,np.uint8)
-            for i in range(self.styleset_len):
-                if self.output_size==128:
-                    tmpvox = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
-                elif self.output_size==256:
-                    tmpvox = get_vox_from_binvox(os.path.join(self.data_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
-                rendered_view = self.voxel_renderer.render_img_with_camera_pose_gpu(tmpvox, self.sampling_threshold)
-                img_x = int(embedded[i,0])
-                img_y = int(embedded[i,1])
-                plt[img_y:img_y+self.real_size,img_x:img_x+self.real_size] = np.minimum(plt[img_y:img_y+self.real_size,img_x:img_x+self.real_size], rendered_view)
-            cv2.imwrite(config.sample_dir+"/"+"latent_gz.png", plt)
-            print("rendering...complete")
-        else:
-            #load rendered
-            plt = cv2.imread(config.sample_dir+"/"+"latent_gz.png", cv2.IMREAD_UNCHANGED)
-
-
-
-
-        #rescale embedding image
-        rescale_factor = UI_height/(img_size+self.real_size)
-        plt = cv2.resize(plt, (UI_height,UI_height))
-        plt[0,:] = 205
-        plt[-1,:] = 205
-        plt[:,0] = 205
-        plt[:,-1] = 205
-        plt = np.reshape(plt,[UI_height,UI_height,1])
-        UI_image_[:,UI_imgheight:] = plt
-
-        render_boundary_padding_size = 16
-
-        content_offset_x = 100
-        content_offset_y = UI_imgheight + 20
-        content_spacing = 20
-        content_textlen = 400
-        content_max_len = 8
-        content_start = 0
-        content_id = 0
-        content_id_changed_flag = True
-        font = cv2.FONT_HERSHEY_SIMPLEX
-
-        scrollbar_offset_x = content_offset_x - 30
-        scrollbar_offset_x2 = content_offset_x - 10
-        scrollbar_offset_y = content_offset_y - content_spacing
-        scrollbar_offset_y2 = scrollbar_offset_y + content_max_len*content_spacing
-        scrollbar_height = content_max_len*content_spacing
-
-        content_img_size = 200
-        content_img_offset_x = 550
-        content_img_offset_y = UI_imgheight
-        quater_real_size = self.real_size//4
-        half_real_size = self.real_size//2
-
-        cam_alpha = 0.785
-        cam_beta = 0.785
-
-
-        embedded[:,0] = (embedded[:,0] +half_real_size)*rescale_factor
-        embedded[:,1] = (embedded[:,1] +half_real_size)*rescale_factor
-        tsne_x = int(embedded[0,0])
-        tsne_y = int(embedded[0,1])
-        z_vector = np.zeros([self.styleset_len],np.float32)
-        z_vector[0] = 1
-        z_vector_changed_flag = True
-
-
-        #prepare the triangulation and barycentric coordinates
-        #https://codereview.stackexchange.com/questions/41024/faster-computation-of-barycentric-coordinates-for-many-points
-        tri = Delaunay(embedded)
-        tri_index = tri.simplices
-        points_idxs = np.linspace(0,UI_height-1, UI_height, dtype = np.float32)
-        points_x, points_y = np.meshgrid(points_idxs,points_idxs, sparse=False, indexing='ij')
-        points_x = np.reshape(points_x, [UI_height*UI_height,1])
-        points_y = np.reshape(points_y, [UI_height*UI_height,1])
-        points = np.concatenate([points_y,points_x], 1)
-        row_idx = tri.find_simplex(points)
-        X = tri.transform[row_idx, :2]
-        Y = points - tri.transform[row_idx, 2]
-        b = np.einsum('...jk,...k->...j', X, Y)
-        bcoords = np.c_[b, 1-b.sum(axis=1)]
-        bcoords = np.reshape(bcoords, [UI_height,UI_height,3])
-        valid_mask = np.reshape(row_idx>=0, [UI_height,UI_height,1]).astype(np.uint8)
-        row_idx = np.reshape(row_idx, [UI_height,UI_height])
-        UI_image_[:,UI_imgheight:] = np.minimum(UI_image_[:,UI_imgheight:], valid_mask*15+240)
-
-
-        #capture mouse events
-        mouse_xyd = np.zeros([3], np.int32)
-        mouse_xyd_backup = np.zeros([3], np.int32)
-        def mouse_ops(event,x,y,flags,param):
-            if event == cv2.EVENT_LBUTTONDOWN:
-                mouse_xyd[2] = 1
-                mouse_xyd[0] = x
-                mouse_xyd[1] = y
-            elif event == cv2.EVENT_MOUSEMOVE:
-                if mouse_xyd[2] == 1:
-                    mouse_xyd[0] = x
-                    mouse_xyd[1] = y
-            elif event == cv2.EVENT_LBUTTONUP:
-                mouse_xyd[2] = 0
-
-
-        Window_name = "Explorer"
-        cv2.namedWindow(Window_name)
-        cv2.setMouseCallback(Window_name,mouse_ops)
-
-        #UI starts
-        while True:
-
-            #deal with mouse events
-            if mouse_xyd[0]!=mouse_xyd_backup[0] or mouse_xyd[1]!=mouse_xyd_backup[1] or mouse_xyd[2]!=mouse_xyd_backup[2]:
-
-                if mouse_xyd[0]<UI_imgheight and mouse_xyd[1]<UI_imgheight: #inside output rergion
-                    if mouse_xyd_backup[0]<UI_imgheight and mouse_xyd_backup[1]<UI_imgheight and mouse_xyd[2]==1 and mouse_xyd_backup[2]==1:
-                        dx = mouse_xyd[0] - mouse_xyd_backup[0]
-                        dy = mouse_xyd[1] - mouse_xyd_backup[1]
-                        cam_alpha += dx/200.0
-                        cam_beta += dy/200.0
-                        if cam_beta>1.2: cam_beta=1.2
-                        if cam_beta<-1.2: cam_beta=-1.2
-
-                elif mouse_xyd[0]>UI_imgheight: #inside tsne rergion
-                    if mouse_xyd[2]==1:
-                        this_row_idx = row_idx[mouse_xyd[1],mouse_xyd[0]-UI_imgheight]
-                        if this_row_idx>=0:
-                            tsne_x = mouse_xyd[0]-UI_imgheight
-                            tsne_y = mouse_xyd[1]
-                            this_tri_index = tri_index[this_row_idx]
-                            this_bcoords = bcoords[tsne_y,tsne_x]
-                            z_vector[:] = 0
-                            for i in range(3):
-                                z_vector[this_tri_index[i]] = this_bcoords[i]
-                            z_vector_changed_flag = True
-
-                elif mouse_xyd[0]>=scrollbar_offset_x and mouse_xyd[0]<scrollbar_offset_x2 and mouse_xyd[1]>=scrollbar_offset_y and mouse_xyd[1]<scrollbar_offset_y2+20: #inside scrollbar
-                    if mouse_xyd[2]==1:
-                        dy = float(mouse_xyd[1] -10 - scrollbar_offset_y)/scrollbar_height
-                        content_start = int(self.dataset_len*dy)
-                        if content_start<0: content_start=0
-                        if content_start>=self.dataset_len-content_max_len: content_start=self.dataset_len-content_max_len-1
-
-                elif mouse_xyd[0]>=content_offset_x and mouse_xyd[0]<content_offset_x + content_textlen and mouse_xyd[1]>=scrollbar_offset_y and mouse_xyd[1]<scrollbar_offset_y2: #inside content shape browser
-                    if mouse_xyd[2]==1 and mouse_xyd_backup[2]==0:
-                        dy = mouse_xyd[1] - scrollbar_offset_y
-                        content_id = content_start + dy//content_spacing
-                        content_id_changed_flag = True
-                        z_vector_changed_flag = True
-
-                mouse_xyd_backup[:] = mouse_xyd[:]
-
-            #put embedding image
-            UI_image = np.copy(UI_image_)
-            text_x = tsne_x  +UI_imgheight -5
-            text_x2 = text_x +10
-            text_x2 = min(text_x2, UI_width)
-            text_y = tsne_y -5
-            text_y2 = text_y +10
-            text_y = max(text_y, 0)
-            text_y2 = min(text_y2, UI_height)
-            UI_image[text_y:text_y2,text_x:text_x2, 1:3] = 0
-
-            #put content shape browser
-            text_x = content_offset_x
-            text_x2 = content_offset_x + content_textlen
-            text_y = scrollbar_offset_y
-            text_y2 = scrollbar_offset_y2
-            UI_image[text_y:text_y2,text_x:text_x2] = 240
-
-            #scrollbar
-            text_x = scrollbar_offset_x
-            text_x2 = scrollbar_offset_x2
-            text_y = scrollbar_offset_y
-            text_y2 = scrollbar_offset_y2
-            UI_image[text_y:text_y2,text_x:text_x2] = 240
-
-            dy = float(mouse_xyd[1] - scrollbar_offset_y)/scrollbar_height
-            content_start//self.dataset_len * scrollbar_height
-
-            content_id_pos = content_start*scrollbar_height//self.dataset_len
-            text_x = scrollbar_offset_x
-            text_x2 = scrollbar_offset_x2
-            text_y = scrollbar_offset_y + content_id_pos
-            text_y2 = text_y + 20
-            UI_image[text_y:text_y2,text_x:text_x2] = 205
-
-            #highlight
-            relative_pos = content_id - content_start
-            if relative_pos>=0 and relative_pos<content_max_len:
-                text_x = content_offset_x
-                text_x2 = content_offset_x + content_textlen
-                text_y = scrollbar_offset_y + relative_pos*content_spacing
-                text_y2 = text_y + content_spacing
-                UI_image[text_y:text_y2,text_x:text_x2,0] = 255
-                UI_image[text_y:text_y2,text_x:text_x2,1] = 232
-                UI_image[text_y:text_y2,text_x:text_x2,2] = 204
-            
-            #texts of names
-            for i in range(content_max_len):
-                text = self.dataset_names[i+content_start]
-                text_x = content_offset_x
-                text_y = content_offset_y + i*content_spacing -5
-                cv2.putText(UI_image, text, (text_x, text_y), font, 0.5, (0,0,0), 1)
-
-            #loading content shape
-            if content_id_changed_flag:
-                content_id_changed_flag = False
-
-                if self.output_size==128:
-                    tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
-                elif self.output_size==256:
-                    tmp_raw = get_vox_from_binvox(os.path.join(self.data_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
-                xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
-                tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
-
-                tmp_input, tmp_Dmask, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
-                mask_fake  = torch.from_numpy(tmp_mask).to(self.device).unsqueeze(0).unsqueeze(0).float()
-                input_fake = torch.from_numpy(tmp_input).to(self.device).unsqueeze(0).unsqueeze(0).float()
-
-                tmp_voxel_fake = self.get_voxel_mask_exact(tmp)
-
-                contentvox = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
-
-                xmin2 = xmin*self.upsample_rate-self.mask_margin
-                xmax2 = xmax*self.upsample_rate+self.mask_margin
-                ymin2 = ymin*self.upsample_rate-self.mask_margin
-                ymax2 = ymax*self.upsample_rate+self.mask_margin
-                if self.asymmetry:
-                    zmin2 = zmin*self.upsample_rate-self.mask_margin
-                else:
-                    zmin2 = zmin*self.upsample_rate
-                zmax2 = zmax*self.upsample_rate+self.mask_margin
-
-                if self.asymmetry:
-                    contentvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,:]
-                else:
-                    contentvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
-                    contentvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2-1+render_boundary_padding_size:zmin2*2-zmax2-1+render_boundary_padding_size:-1] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
-
-                contentvox_tensor = torch.from_numpy(contentvox).to(self.device).unsqueeze(0).unsqueeze(0).float()
-
-            img = self.voxel_renderer.render_img_with_camera_pose_gpu(contentvox_tensor, self.sampling_threshold, cam_alpha, cam_beta, get_depth = False, processed = True)
-            img = cv2.resize(img, (content_img_size,content_img_size))
-            UI_image[content_img_offset_y:content_img_offset_y+content_img_size,content_img_offset_x:content_img_offset_x+content_img_size] = np.reshape(img,[content_img_size,content_img_size,1])
-
-
-
-            #running the network
-            if z_vector_changed_flag:
-                z_vector_changed_flag = False
-
-                z_tensor = torch.from_numpy(z_vector).to(self.device).view([1,-1])
-                z_tensor_g = torch.matmul(z_tensor, self.generator.style_codes).view([1,-1,1,1,1])
-                voxel_fake = self.generator(input_fake,z_tensor_g,mask_fake,is_training=False)
-
-                tmp_voxel_fake = voxel_fake.detach().cpu().numpy()[0,0]
-
-                outputvox = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
-
-                xmin2 = xmin*self.upsample_rate-self.mask_margin
-                xmax2 = xmax*self.upsample_rate+self.mask_margin
-                ymin2 = ymin*self.upsample_rate-self.mask_margin
-                ymax2 = ymax*self.upsample_rate+self.mask_margin
-                if self.asymmetry:
-                    zmin2 = zmin*self.upsample_rate-self.mask_margin
-                else:
-                    zmin2 = zmin*self.upsample_rate
-                zmax2 = zmax*self.upsample_rate+self.mask_margin
-
-                if self.asymmetry:
-                    outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,:]
-                else:
-                    outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
-                    outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2-1+render_boundary_padding_size:zmin2*2-zmax2-1+render_boundary_padding_size:-1] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
-
-                outputvox_tensor = torch.from_numpy(outputvox).to(self.device).unsqueeze(0).unsqueeze(0).float()
-
-            img = self.voxel_renderer.render_img_with_camera_pose_gpu(outputvox_tensor, self.sampling_threshold, cam_alpha, cam_beta, get_depth = False, processed = True)
-            img = cv2.resize(img, (UI_imgheight,UI_imgheight))
-            
-            UI_image[:UI_imgheight,:UI_imgheight] = np.reshape(img,[UI_imgheight,UI_imgheight,1])
-
-
-            cv2.imshow(Window_name, UI_image)
-            key = cv2.waitKey(1)
-            if key == 32: #space
-                break
-
+      self.voxel_renderer.use_gpu()
+      
+      zspace_img = self.ui_setup(config, True)
+      
+      window = tk.Tk(className='DECOR-GAN zspace explorer')
+      window.configure(bg="#F1F1F1")
+      # window.geometry("1300x1000")
+      self.selected = 0
+      
+      # List of content options
+      helv36 = tkFont.Font(family="Helvetica",size=18)
+      self.list_box = tk.Listbox(window, bg='white', selectforeground='Black', activestyle='none', selectbackground='SeaGreen2', height=15, width=15, font=helv36, relief=tk.FLAT)
+      self.list_box.config(bd=3, highlightthickness=3, highlightcolor="grey93")
+      for i in range(len(self.dataset_names)):
+        self.list_box.insert(i + 1, self.dataset_names[i])
+      self.list_box.select_set(self.selected)
+      
+      # Content image
+      content_img = self.get_content_img(self.selected, bg=241)
+      content_img = Image.fromarray(content_img)
+      imgtk_cont = ImageTk.PhotoImage(image=content_img)
+      self.content_img_tk = tk.Label(window, image=imgtk_cont)
+      self.content_img_tk.config(bd=0, highlightthickness=0)
+      self.content_img_tk.grid(column=1, row=2)
+      
+      def select_content(event):
+        self.selected = self.list_box.curselection()[0]
+        content_img = self.get_content_img(self.selected, bg=241)
+        content_img = Image.fromarray(content_img)
+        imgtk_cont = ImageTk.PhotoImage(image=content_img)
+        self.content_img_tk.configure(image=imgtk_cont)
+        self.content_img_tk.image=imgtk_cont
+
+        self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+        self.update_z_img()
+        
+        self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+      
+      self.list_box.bind('<<ListboxSelect>>', select_content)
+      
+      # list_box.pack(fill=tk.BOTH, side=tk.LEFT)
+      self.list_box.grid(column=0, row=2, sticky=tk.S, padx=10, pady=10)
+      
+      # z space Image
+      zspace_img = Image.fromarray(zspace_img)
+      imgtk = ImageTk.PhotoImage(image=zspace_img)
+
+      # zspace_img = tk.Label(window, image=imgtk)
+      canvas = tk.Canvas(window, width=1000, height=1000)
+      canvas.config(bd=0, highlightthickness=0)
+      self.img_canvas = ImgCanvas(canvas, imgtk)
+
+      # canvas.pack(fill=tk.BOTH, expand=1, side=tk.RIGHT) # Stretch canvas to root window size.
+      canvas.grid(column=2, row=0, rowspan=3, columnspan=3)
+      
+      def onMouseMove(event):
+        self.img_canvas.onMouseMove(event)
+        if self.img_canvas.moved:
+          self.img_canvas.moved = False
+          self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+          self.update_z_img()
+          
+      def onMouseDown(event):
+        self.img_canvas.onMouseDown(event)
+        if self.img_canvas.moved:
+          self.img_canvas.moved = False
+          self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+          self.update_z_img()
+        
+      def onMouseUp(event):
+        self.img_canvas.onMouseUp(event)
+        if self.img_canvas.moved:
+          self.img_canvas.moved = False
+          self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+          self.update_z_img()
+      
+      canvas.bind('<Motion>', onMouseMove)
+      canvas.bind("<ButtonPress-1>", onMouseDown)
+      canvas.bind("<ButtonRelease-1>", onMouseUp)
+      
+      self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+      
+      z_img = self.render_style(self.z_vector, bg=241)
+      z_img = Image.fromarray(z_img)
+      imgtk_z = ImageTk.PhotoImage(image=z_img)
+      self.z_img_tk = tk.Label(window, image=imgtk_z)
+      self.z_img_tk.config(bd=0, highlightthickness=0)
+      self.z_img_tk.grid(column=0, row=0, rowspan=2, columnspan=2)
+
+      window.resizable(False,False)
+      window.mainloop()
+
+    def update_z_img(self):
+      z_img = self.render_style(self.z_vector, bg=241)
+      z_img = Image.fromarray(z_img)
+      imgtk_z = ImageTk.PhotoImage(image=z_img)
+      self.z_img_tk.configure(image=imgtk_z)
+      self.z_img_tk.image=imgtk_z
+
+    def update_zvec(self, x, y):      
+      try:
+        this_row_idx = self.row_idx[y,x-self.UI_imgheight]
+        if this_row_idx>=0:
+          tsne_x = x-self.UI_imgheight
+          tsne_y = y
+          this_tri_index = self.tri_index[this_row_idx]
+          this_bcoords = self.bcoords[tsne_y,tsne_x]
+          self.z_vector[:] = 0
+          for i in range(3):
+            self.z_vector[this_tri_index[i]] = this_bcoords[i]
+      except IndexError:
+        pass
+
+    def get_content_img(self, content_id, bg=255):
+      render_boundary_padding_size = 16
+
+      cam_alpha = 0.785
+      cam_beta = 0.785
+      content_img_size = 300
+
+      # if self.output_size==128:
+          # print(self.data_content_dir, self.dataset_names[content_id])
+          # print(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox"))
+      tmp_raw = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+      # elif self.output_size==256:
+      #     tmp_raw = get_vox_from_binvox(os.path.join(self.data_content_dir,self.dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+      xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(tmp_raw)
+      self.bounds = [xmin,xmax,ymin,ymax,zmin,zmax]
+      tmp = self.crop_voxel(tmp_raw,xmin,xmax,ymin,ymax,zmin,zmax)
+
+      tmp_input, _, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
+      self.mask_fake  = torch.from_numpy(tmp_mask).to(self.device).unsqueeze(0).unsqueeze(0).float()
+      self.input_fake = torch.from_numpy(tmp_input).to(self.device).unsqueeze(0).unsqueeze(0).float()
+
+      tmp_voxel_fake = self.get_voxel_mask_exact(tmp)
+
+      contentvox = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
+
+      xmin2 = xmin*self.upsample_rate-self.mask_margin
+      xmax2 = xmax*self.upsample_rate+self.mask_margin
+      ymin2 = ymin*self.upsample_rate-self.mask_margin
+      ymax2 = ymax*self.upsample_rate+self.mask_margin
+      if self.asymmetry:
+          zmin2 = zmin*self.upsample_rate-self.mask_margin
+      else:
+          zmin2 = zmin*self.upsample_rate
+      zmax2 = zmax*self.upsample_rate+self.mask_margin
+
+      if self.asymmetry:
+          contentvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,:]
+      else:
+          contentvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
+          contentvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2-1+render_boundary_padding_size:zmin2*2-zmax2-1+render_boundary_padding_size:-1] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
+
+      contentvox_tensor = torch.from_numpy(contentvox).to(self.device).unsqueeze(0).unsqueeze(0).float()
+
+      img = self.voxel_renderer.render_img_with_camera_pose_gpu(contentvox_tensor, self.sampling_threshold, cam_alpha, cam_beta, get_depth = False, processed = True, bg=bg)
+      img = cv2.resize(img, (content_img_size,content_img_size))
+      return np.reshape(img,[content_img_size,content_img_size])
+
+    def render_style(self, z_vector, bg=255):
+      render_boundary_padding_size = 16
+      UI_imgheight = 500
+      cam_alpha = 0.785
+      cam_beta = 0.785
+
+      z_tensor = torch.from_numpy(z_vector).to(self.device).view([1,-1])
+      z_tensor_g = torch.matmul(z_tensor, self.generator.style_codes).view([1,-1,1,1,1])
+      voxel_fake = self.generator(self.input_fake,z_tensor_g,self.mask_fake,is_training=False)
+
+      tmp_voxel_fake = voxel_fake.detach().cpu().numpy()[0,0]
+
+      outputvox = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
+      
+      xmin,xmax,ymin,ymax,zmin,zmax = self.bounds
+      xmin2 = xmin*self.upsample_rate-self.mask_margin
+      xmax2 = xmax*self.upsample_rate+self.mask_margin
+      ymin2 = ymin*self.upsample_rate-self.mask_margin
+      ymax2 = ymax*self.upsample_rate+self.mask_margin
+      if self.asymmetry:
+          zmin2 = zmin*self.upsample_rate-self.mask_margin
+      else:
+          zmin2 = zmin*self.upsample_rate
+      zmax2 = zmax*self.upsample_rate+self.mask_margin
+
+      if self.asymmetry:
+          outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,:]
+      else:
+          outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
+          outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2-1+render_boundary_padding_size:zmin2*2-zmax2-1+render_boundary_padding_size:-1] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
+
+      outputvox_tensor = torch.from_numpy(outputvox).to(self.device).unsqueeze(0).unsqueeze(0).float()
+
+      img = self.voxel_renderer.render_img_with_camera_pose_gpu(outputvox_tensor, self.sampling_threshold, cam_alpha, cam_beta, get_depth = False, processed = True, bg=bg)
+      img = cv2.resize(img, (UI_imgheight,UI_imgheight))
+      
+      return np.reshape(img,[UI_imgheight,UI_imgheight])
+
+    def ui_setup(self, config, use_precomputed_tsne=False):
+      self.sampling_threshold = 0.25
+      if not self.load(): exit(-1)
+      UI_height = 1000
+      self.UI_imgheight = 1000
+      img_size = 2048
+      half_real_size = self.real_size//2
+      rescale_factor = UI_height/(img_size+self.real_size)
+      
+      if not use_precomputed_tsne:
+        #compute
+        self.embedded = TSNE(n_components=2,perplexity=16,learning_rate=10.0,n_iter=2000).fit_transform(style_codes)
+        fout = open(config.sample_dir+"/"+"tsne_coords.txt", 'w')
+        for i in range(self.styleset_len):
+          fout.write( str(self.embedded[i,0])+"\t"+str(self.embedded[i,1])+"\n" )
+        fout.close()
+      else:
+        #load computed
+        self.embedded = np.zeros([self.styleset_len,2], np.float32)
+        fin = open(config.sample_dir+"/"+"tsne_coords.txt")
+        lines = fin.readlines()
+        fin.close()
+        for i in range(self.styleset_len):
+          line = lines[i].split()
+          self.embedded[i,0] = float(line[0])
+          self.embedded[i,1] = float(line[1])
+
+      if self.output_size==128:
+          img_size = 2048
+      elif self.output_size==256:
+          img_size = 4096
+      x_max = np.max(self.embedded[:,0])
+      x_min = np.min(self.embedded[:,0])
+      y_max = np.max(self.embedded[:,1])
+      y_min = np.min(self.embedded[:,1])
+      x_mid = (x_max+x_min)/2
+      y_mid = (y_max+y_min)/2
+      scalex = (x_max-x_min)*1.0
+      scaley = (y_max-y_min)*1.0
+      self.embedded[:,0] = ((self.embedded[:,0]-x_mid)/scalex+0.5)*img_size
+      self.embedded[:,1] = ((self.embedded[:,1]-y_mid)/scaley+0.5)*img_size
+
+      if not use_precomputed_tsne:
+        #render
+        print("rendering...")
+        plt = np.full([img_size+self.real_size,img_size+self.real_size],255,np.uint8)
+        for i in range(self.styleset_len):
+          if self.output_size==128:
+            tmpvox = get_vox_from_binvox_1over2(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+          elif self.output_size==256:
+            tmpvox = get_vox_from_binvox(os.path.join(self.data_style_dir,self.styleset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+          rendered_view = self.voxel_renderer.render_img_with_camera_pose_gpu(tmpvox, self.sampling_threshold)
+          img_x = int(self.embedded[i,0])
+          img_y = int(self.embedded[i,1])
+          plt[img_y:img_y+self.real_size,img_x:img_x+self.real_size] = np.minimum(plt[img_y:img_y+self.real_size,img_x:img_x+self.real_size], rendered_view)
+        cv2.imwrite(config.sample_dir+"/"+"latent_gz.png", plt)
+        print("rendering...complete")
+      else:
+        #load rendered
+        plt = cv2.imread(config.sample_dir+"/"+"latent_gz.png", cv2.IMREAD_UNCHANGED)
+
+      #rescale embedding image
+      plt = cv2.resize(plt, (UI_height,UI_height))
+      plt[0,:] = 205
+      plt[-1,:] = 205
+      plt[:,0] = 205
+      plt[:,-1] = 205
+      plt = np.reshape(plt,[UI_height,UI_height])
+      
+      self.embedded[:,0] = (self.embedded[:,0] +half_real_size)*rescale_factor
+      self.embedded[:,1] = (self.embedded[:,1] +half_real_size)*rescale_factor
+
+      self.z_vector = np.zeros([self.styleset_len],np.float32)
+      self.z_vector[0] = 1 
+      
+      tri = Delaunay(self.embedded)
+      self.tri_index = tri.simplices
+      points_idxs = np.linspace(0,UI_height-1, UI_height, dtype = np.float32)
+      points_x, points_y = np.meshgrid(points_idxs,points_idxs, sparse=False, indexing='ij')
+      points_x = np.reshape(points_x, [UI_height*UI_height,1])
+      points_y = np.reshape(points_y, [UI_height*UI_height,1])
+      points = np.concatenate([points_y,points_x], 1)
+      row_idx = tri.find_simplex(points)
+      X = tri.transform[row_idx, :2]
+      Y = points - tri.transform[row_idx, 2]
+      b = np.einsum('...jk,...k->...j', X, Y)
+      self.bcoords = np.c_[b, 1-b.sum(axis=1)]
+      self.bcoords = np.reshape(self.bcoords, [UI_height,UI_height,3])
+      self.row_idx = np.reshape(row_idx, [UI_height,UI_height])
+      
+      style_codes = self.generator.style_codes.detach().cpu().numpy()
+      style_codes = (style_codes-np.mean(style_codes,axis=0))/np.std(style_codes,axis=0)
+
+      return plt
 

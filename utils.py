@@ -39,6 +39,7 @@ def get_vox_from_binvox_1over2(objname):
     #get voxel models
     voxel_model_file = open(objname, 'rb')
     voxel_model_512 = binvox_rw.read_as_3d_array(voxel_model_file, fix_coords=True).data.astype(np.uint8)
+    # print("!", voxel_model_512.shape)
     step_size = 4
     padding_size = 256%step_size
     output_padding = 128-(256//step_size)
@@ -425,7 +426,7 @@ class voxel_renderer:
         self.voxel_y_tensor = torch.from_numpy(self.voxel_y/(self.render_fix_vox_size/2)).to(self.device)
         self.voxel_z_tensor = torch.from_numpy(self.voxel_z/(self.render_fix_vox_size/2)).to(self.device)
 
-    def render_img_with_camera_pose_gpu(self, voxel_in, threshold, cam_alpha = 0.785, cam_beta = 0.785, get_depth = False, processed = False, ray_x = 0, ray_y = 0, ray_z = 1, steep_threshold = 16):
+    def render_img_with_camera_pose_gpu(self, voxel_in, threshold, cam_alpha = 0.785, cam_beta = 0.785, get_depth = False, processed = False, ray_x = 0, ray_y = 0, ray_z = 1, steep_threshold = 16, bg=255):
         if processed:
             voxel_tensor = voxel_in
             imgsize = voxel_tensor.size()[2]
@@ -541,6 +542,7 @@ class voxel_renderer:
             output = output*220 + (1-mask[1:-1,1:-1])*256
             output = output[self.render_boundary_padding_size-1:-self.render_boundary_padding_size+1,self.render_boundary_padding_size-1:-self.render_boundary_padding_size+1]
             output = torch.clamp(output, min=0, max=255)
+            output[output == 255] = bg
             output = output.detach().cpu().numpy().astype(np.uint8)
 
         return output

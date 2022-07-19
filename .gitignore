@@ -1,0 +1,8 @@
+/samples
+/old_samples
+/data
+/render_fake_for_eval
+/render_real_for_eval
+/venv36
+/build
+/__pycache__

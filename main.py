@@ -6,9 +6,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--epoch", action="store", dest="epoch", default=20, type=int, help="Epoch to train [20]")
 parser.add_argument("--iteration", action="store", dest="iteration", default=0, type=int, help="Iteration to train. Either epoch or iteration need to be zero [0]")
 
-parser.add_argument("--data_style", action="store", dest="data_style", help="The name of dataset")
-parser.add_argument("--data_content", action="store", dest="data_content", help="The name of dataset")
-parser.add_argument("--data_dir", action="store", dest="data_dir", help="Root directory of dataset")
+parser.add_argument("--data_style", action="store", dest="data_style", help="The name of style dataset")
+parser.add_argument("--data_content", action="store", dest="data_content", help="The name of content dataset")
+parser.add_argument("--data_content_gt", action="store", dest="data_content_gt", help="The name of gt content dataset")
+
+parser.add_argument("--data_style_dir", action="store", dest="data_style_dir", help="Root directory of style dataset")
+parser.add_argument("--data_content_dir", action="store", dest="data_content_dir", help="Root directory of content dataset")
+parser.add_argument("--data_content_gt_dir", action="store", dest="data_content_gt_dir", help="Root directory of gt content dataset")
 parser.add_argument("--checkpoint_dir", action="store", dest="checkpoint_dir", default="checkpoint", help="Directory name to save the checkpoints [checkpoint]")
 parser.add_argument("--sample_dir", action="store", dest="sample_dir", default="./samples/", help="Directory name to save the image samples [samples]")
 
