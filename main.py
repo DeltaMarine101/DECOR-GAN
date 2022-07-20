@@ -46,6 +46,8 @@ parser.add_argument("--prepFIDreal", action="store_true", dest="prepFIDreal", de
 parser.add_argument("--evalFID", action="store_true", dest="evalFID", default=False, help="True for evaluating FID [False]")
 
 parser.add_argument("--ui", action="store_true", dest="ui", default=False, help="launch a UI for latent space exploration [False]")
+parser.add_argument("--contentui", action="store_true", dest="content_ui", default=False, help="launch a UI for content latent space exploration [False]")
+parser.add_argument("--combinedui", action="store_true", dest="combined_ui", default=False, help="launch a UI for combined latent space exploration [False]")
 
 parser.add_argument("--gpu", action="store", dest="gpu", default="0", help="to use which GPU [0]")
 
@@ -119,6 +121,14 @@ elif FLAGS.evalFID:
 elif FLAGS.ui:
     im_ae = IM_AE(FLAGS)
     im_ae.launch_ui(FLAGS)
+
+elif FLAGS.content_ui:
+    im_ae = IM_AE(FLAGS)
+    im_ae.launch_content_ui(FLAGS)
+
+elif FLAGS.combined_ui:
+    im_ae = IM_AE(FLAGS)
+    im_ae.launch_combined_ui(FLAGS)
 
 else:
     print('?!')

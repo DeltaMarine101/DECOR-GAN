@@ -5,12 +5,22 @@
 
 # ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --alpha 0.5 --beta 10.0 --input_size 32 --output_size 128 --train --gpu 0 --epoch 20 --asymmetry
 
+# UI's
 # ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --ui --gpu 0 --asymmetry
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --contentui --gpu 0 --asymmetry
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --combinedui --gpu 0 --asymmetry
 
+# CLS score
 # ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_all --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --prepimgreal --gpu 0
 # ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_test --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --prepimg --gpu 0
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_all --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --evalimg --gpu 0
 
-import os
+# FID score
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_all --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --prepFIDreal --gpu 0
+# ./venv36/Scripts/python.exe main.py --data_style style_chair_64 --data_content gen_content --data_content_gt content_chair_test --data_content_gt_dir ./data/03001627/ --data_style_dir ./data/03001627/ --data_content_dir ../generating_3d_meshes/generated_results --input_size 32 --output_size 128 --prepFID --gpu 0
+# 
+
+import os, sys
 import time
 # import math
 # import random
@@ -18,7 +28,9 @@ import numpy as np
 import cv2
 from scipy.ndimage.filters import gaussian_filter
 from sklearn.manifold import TSNE
+from sklearn.decomposition import TruncatedSVD
 from tqdm import tqdm
+from scipy import ndimage
 
 import torch
 import torch.nn.functional as F
@@ -995,6 +1007,7 @@ class IM_AE(object):
     # remade UI in tkinter because I'm not a psychopath
     def launch_ui(self, config):
       self.voxel_renderer.use_gpu()
+      self.combined_ui = False
       
       zspace_img = self.ui_setup(config, True)
       
@@ -1040,7 +1053,6 @@ class IM_AE(object):
       # z space Image
       zspace_img = Image.fromarray(zspace_img)
       imgtk = ImageTk.PhotoImage(image=zspace_img)
-
       # zspace_img = tk.Label(window, image=imgtk)
       canvas = tk.Canvas(window, width=1000, height=1000)
       canvas.config(bd=0, highlightthickness=0)
@@ -1074,8 +1086,8 @@ class IM_AE(object):
       canvas.bind("<ButtonPress-1>", onMouseDown)
       canvas.bind("<ButtonRelease-1>", onMouseUp)
       
+      # Rendered image
       self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
-      
       z_img = self.render_style(self.z_vector, bg=241)
       z_img = Image.fromarray(z_img)
       imgtk_z = ImageTk.PhotoImage(image=z_img)
@@ -1093,7 +1105,7 @@ class IM_AE(object):
       self.z_img_tk.configure(image=imgtk_z)
       self.z_img_tk.image=imgtk_z
 
-    def update_zvec(self, x, y):      
+    def update_zvec(self, x, y):
       try:
         this_row_idx = self.row_idx[y,x-self.UI_imgheight]
         if this_row_idx>=0:
@@ -1155,20 +1167,28 @@ class IM_AE(object):
       return np.reshape(img,[content_img_size,content_img_size])
 
     def render_style(self, z_vector, bg=255):
-      render_boundary_padding_size = 16
+      render_boundary_padding_size = 32
       UI_imgheight = 500
+      # if self.combined_ui:
+      #   cam_alpha = 0.785
+      #   cam_beta = 0.185
+      # else:
       cam_alpha = 0.785
       cam_beta = 0.785
 
-      z_tensor = torch.from_numpy(z_vector).to(self.device).view([1,-1])
-      z_tensor_g = torch.matmul(z_tensor, self.generator.style_codes).view([1,-1,1,1,1])
-      voxel_fake = self.generator(self.input_fake,z_tensor_g,self.mask_fake,is_training=False)
+      z_tensor = torch.from_numpy(z_vector).to(torch.device('cuda')).view([1,-1])
+      z_tensor_g = torch.matmul(z_tensor, self.generator.style_codes.to(torch.device('cuda'))).view([1,-1,1,1,1])
+      voxel_fake = self.generator(self.input_fake.to(torch.device('cuda')),z_tensor_g,self.mask_fake.to(torch.device('cuda')),is_training=False)
 
       tmp_voxel_fake = voxel_fake.detach().cpu().numpy()[0,0]
-
+      # print("siz", voxel_fake.shape, tmp_voxel_fake.shape)
       outputvox = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
+
+      # if self.combined_ui: 
+      #   self.bounds = [20,48,20,48,20,48]
       
       xmin,xmax,ymin,ymax,zmin,zmax = self.bounds
+      # print("bounds", self.bounds)
       xmin2 = xmin*self.upsample_rate-self.mask_margin
       xmax2 = xmax*self.upsample_rate+self.mask_margin
       ymin2 = ymin*self.upsample_rate-self.mask_margin
@@ -1185,8 +1205,8 @@ class IM_AE(object):
           outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
           outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2-1+render_boundary_padding_size:zmin2*2-zmax2-1+render_boundary_padding_size:-1] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
 
-      outputvox_tensor = torch.from_numpy(outputvox).to(self.device).unsqueeze(0).unsqueeze(0).float()
-
+      outputvox_tensor = torch.from_numpy(outputvox).to(torch.device('cuda')).unsqueeze(0).unsqueeze(0).float()
+      
       img = self.voxel_renderer.render_img_with_camera_pose_gpu(outputvox_tensor, self.sampling_threshold, cam_alpha, cam_beta, get_depth = False, processed = True, bg=bg)
       img = cv2.resize(img, (UI_imgheight,UI_imgheight))
       
@@ -1200,6 +1220,9 @@ class IM_AE(object):
       img_size = 2048
       half_real_size = self.real_size//2
       rescale_factor = UI_height/(img_size+self.real_size)
+      
+      style_codes = self.generator.style_codes.detach().cpu().numpy()
+      style_codes = (style_codes-np.mean(style_codes,axis=0))/np.std(style_codes,axis=0)
       
       if not use_precomputed_tsne:
         #compute
@@ -1281,9 +1304,382 @@ class IM_AE(object):
       self.bcoords = np.c_[b, 1-b.sum(axis=1)]
       self.bcoords = np.reshape(self.bcoords, [UI_height,UI_height,3])
       self.row_idx = np.reshape(row_idx, [UI_height,UI_height])
-      
-      style_codes = self.generator.style_codes.detach().cpu().numpy()
-      style_codes = (style_codes-np.mean(style_codes,axis=0))/np.std(style_codes,axis=0)
 
       return plt
 
+
+    def launch_content_ui(self, config):
+      sys.path.append('..')
+      import generating_3d_meshes.model as model
+      sys.path.append('/DECOR-GAN')
+      self.combined_ui = False
+      
+      self.device = torch.device('cpu')
+      self.content_gen_model = model
+      self.g_content_net = self.content_gen_model.g_net.to(self.device)
+      self.g_content_net.load_state_dict(torch.load('../generating_3d_meshes/results/img_res_27/saved_G_model.pth'))
+      
+      self.voxel_renderer.use_gpu()
+      
+      zspace_img = self.content_ui_setup(config, True)
+      
+      window = tk.Tk(className='Generator zspace explorer')
+      window.configure(bg="#F1F1F1")
+     
+      # content_img = self.content_ui_setup(config)
+      # content_img = Image.fromarray(content_img)
+      # imgtk_cont = ImageTk.PhotoImage(image=content_img)
+      # self.content_img_tk = tk.Label(window, image=imgtk_cont)
+      # self.content_img_tk.config(bd=0, highlightthickness=0)
+      # self.content_img_tk.grid(column=1, row=2)
+      
+      # z space Image
+      zspace_img = Image.fromarray(zspace_img)
+      imgtk = ImageTk.PhotoImage(image=zspace_img)
+      # zspace_img = tk.Label(window, image=imgtk)
+      canvas_cont = tk.Canvas(window, width=1000, height=1000)
+      canvas_cont.config(bd=0, highlightthickness=0)
+      self.img_content_canvas = ImgCanvas(canvas_cont, imgtk)
+
+      # canvas.pack(fill=tk.BOTH, expand=1, side=tk.RIGHT) # Stretch canvas to root window size.
+      canvas_cont.grid(column=2, row=0, rowspan=3, columnspan=3)
+      
+      def onMouseMove(event):
+        self.img_content_canvas.onMouseMove(event)
+        if self.img_content_canvas.moved:
+          self.img_content_canvas.moved = False
+          self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+          self.update_content_z_img()
+          
+      def onMouseDown(event):
+        self.img_content_canvas.onMouseDown(event)
+        if self.img_content_canvas.moved:
+          self.img_content_canvas.moved = False
+          self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+          self.update_content_z_img()
+        
+      def onMouseUp(event):
+        self.img_content_canvas.onMouseUp(event)
+        if self.img_content_canvas.moved:
+          self.img_content_canvas.moved = False
+          self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+          self.update_content_z_img()
+      
+      canvas_cont.bind('<Motion>', onMouseMove)
+      canvas_cont.bind("<ButtonPress-1>", onMouseDown)
+      canvas_cont.bind("<ButtonRelease-1>", onMouseUp)
+      
+      # Rendered image
+      self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+      z_img = self.render_content(bg=241)
+      z_img = Image.fromarray(z_img)
+      imgtk_z = ImageTk.PhotoImage(image=z_img)
+      self.z_content_img_tk = tk.Label(window, image=imgtk_z)
+      self.z_content_img_tk.config(bd=0, highlightthickness=0)
+      self.z_content_img_tk.grid(column=0, row=0, rowspan=2, columnspan=2)
+      
+      window.resizable(False,False)
+      window.mainloop()
+    
+    def update_content_z_img(self):
+      z_img = self.render_content(bg=241)
+      z_img = Image.fromarray(z_img)
+      imgtk_z = ImageTk.PhotoImage(image=z_img)
+      self.z_content_img_tk.configure(image=imgtk_z)
+      self.z_content_img_tk.image=imgtk_z
+      
+    def update_content_zvec(self, x, y):
+      try:
+        this_row_idx = self.row_idx_c[y,x-self.UI_imgheight]
+        if this_row_idx>=0:
+          tsne_x = x-self.UI_imgheight
+          tsne_y = y
+          this_tri_index = self.tri_index_c[this_row_idx]
+          this_bcoords = self.bcoords_c[tsne_y,tsne_x]
+          self.z_vector_weights[:] = 0
+          for i in range(3):
+            self.z_vector_weights[this_tri_index[i]] = this_bcoords[i]
+            # print(self.z_vector[:20])
+      except IndexError:
+        pass
+      
+    def render_content(self, bg=255):
+      render_boundary_padding_size = 32
+      UI_imgheight = 500
+      cam_alpha = 0.785
+      cam_beta = 0.785
+      data_res = 32
+
+      z_tensor = torch.from_numpy(self.z_vector_weights).to(self.device).view([1,-1])
+      z_tensor_g = torch.matmul(z_tensor, torch.from_numpy(self.z_content_vec).type(torch.float)).view([1,-1,1,1,1])
+      
+      
+      voxel_fake = self.g_content_net(z_tensor_g.view([1,self.content_gen_model.latent_n]))
+      voxel_fake = voxel_fake.reshape((data_res, data_res, data_res)) # .to(self.device)
+
+      tmp_voxel_fake = voxel_fake.detach().cpu().numpy()
+      
+      def clean_vox(vox):
+        vox = np.round(vox)        
+        vox = ndimage.binary_dilation(vox)
+        vox = ndimage.binary_erosion(vox)
+        return vox
+      
+      def symmetry_unwrap(vox, axis):
+        vox = np.array(vox)
+        flipped = np.flip(vox, axis=axis).copy()
+        size = vox.shape[axis]
+        if axis == 0:
+          # print(vox[size//2:,:,:].shape, flipped[:size//2,:,:].shape)
+          vox[size//2:,:,:] = flipped[size//2:,:,:]
+        if axis == 1:
+          vox[:,size//2:,:] = flipped[:,size//2:,:]
+        if axis == 2:
+          vox[:,:,size//2:] = flipped[:,:,size//2:]
+        return vox
+      
+      tmp_voxel_fake = symmetry_unwrap(tmp_voxel_fake, 0)
+      tmp_voxel_fake = np.swapaxes(np.swapaxes(clean_vox(tmp_voxel_fake), 0, 1), 1, 2)
+      
+      out_size = 128
+      stride = out_size // data_res
+
+      tmp_voxel_fake = np.repeat(tmp_voxel_fake, stride, axis=2)
+      tmp_voxel_fake = np.repeat(tmp_voxel_fake, stride, axis=1)
+      tmp_voxel_fake = np.repeat(tmp_voxel_fake, stride, axis=0)
+      
+      self.content_vox = tmp_voxel_fake
+      
+      if self.combined_ui:
+        xmin,xmax,ymin,ymax,zmin,zmax = self.get_voxel_bbox(self.content_vox)
+        self.bounds = [xmin,xmax,ymin,ymax,zmin,zmax]
+        tmp = self.crop_voxel(self.content_vox,xmin,xmax,ymin,ymax,zmin,zmax)
+        
+        tmp_input, tmp_Dmask, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
+        self.mask_fake  = torch.from_numpy(tmp_mask).to(self.device).unsqueeze(0).unsqueeze(0).float()
+        self.input_fake = torch.from_numpy(tmp_input).to(self.device).unsqueeze(0).unsqueeze(0).float()
+      
+      # self.real_size = 32
+      # self.mask_margin = 0
+
+      outputvox = np.zeros([self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2,self.real_size+render_boundary_padding_size*2], np.float32)
+      # print(outputvox.shape)
+      xmin,xmax,ymin,ymax,zmin,zmax = [20,48,20,48,20,48]
+      xmin2 = xmin*self.upsample_rate-self.mask_margin
+      xmax2 = xmax*self.upsample_rate+self.mask_margin
+      ymin2 = ymin*self.upsample_rate-self.mask_margin
+      ymax2 = ymax*self.upsample_rate+self.mask_margin
+      if self.asymmetry:
+          zmin2 = zmin*self.upsample_rate-self.mask_margin
+      else:
+          zmin2 = zmin*self.upsample_rate
+      zmax2 = zmax*self.upsample_rate+self.mask_margin
+      
+      # if self.asymmetry:
+      outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,:]
+      
+      # if not self.combined_ui:
+        
+      # tmp_input, _, tmp_mask = self.get_voxel_input_Dmask_mask(tmp)
+      # self.mask_fake  = torch.from_numpy(tmp_mask).to(self.device).unsqueeze(0).unsqueeze(0).float()
+      # self.input_fake = torch.from_numpy(tmp_input).to(self.device).unsqueeze(0).unsqueeze(0).float()
+      # else:
+      #     outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2+render_boundary_padding_size:zmax2+render_boundary_padding_size] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
+      #     outputvox[xmin2+render_boundary_padding_size:xmax2+render_boundary_padding_size,ymin2+render_boundary_padding_size:ymax2+render_boundary_padding_size,zmin2-1+render_boundary_padding_size:zmin2*2-zmax2-1+render_boundary_padding_size:-1] = tmp_voxel_fake[::-1,::-1,self.mask_margin:]
+
+      outputvox_tensor = torch.from_numpy(outputvox).to(self.device).unsqueeze(0).unsqueeze(0).float().to(torch.device('cuda:0'))
+      # print("####", outputvox_tensor.shape)
+      img = self.voxel_renderer.render_img_with_camera_pose_gpu(outputvox_tensor, self.sampling_threshold_c, cam_alpha, cam_beta, get_depth = False, processed = True, bg=bg)
+      img = cv2.resize(img, (UI_imgheight,UI_imgheight))
+      
+      return np.reshape(img,[UI_imgheight,UI_imgheight])
+    
+    def content_ui_setup(self, config, use_precomputed_tsne=False):
+      self.sampling_threshold_c = 0.25
+      UI_height = 1000
+      self.n_content = 64
+      
+      self.UI_imgheight = 1000
+      img_size = 2048
+      half_real_size = self.real_size//2
+      rescale_factor = UI_height/(img_size+self.real_size)
+
+      self.z_content_vec = np.load('../generating_3d_meshes/latent_vecs.npz')['arr_0'].reshape((-1, 256))[:self.n_content]
+
+      if not use_precomputed_tsne:
+        self.embedded_c = TSNE(n_components=2,perplexity=16,learning_rate=10.0,n_iter=2000).fit_transform(self.z_content_vec)
+        fout = open(config.sample_dir+"/"+"tsne_content_coords.txt", 'w')
+        for i in range(self.n_content):
+          fout.write( str(self.embedded_c[i,0])+"\t"+str(self.embedded_c[i,1])+"\n" )
+        fout.close()
+      else:
+        #load computed
+        self.embedded_c = np.zeros([self.n_content,2], np.float32)
+        fin = open(config.sample_dir+"/"+"tsne_content_coords.txt")
+        lines = fin.readlines()
+        fin.close()
+        for i in range(self.n_content):
+          line = lines[i].split()
+          self.embedded_c[i,0] = float(line[0])
+          self.embedded_c[i,1] = float(line[1])
+          
+      img_size = 2048
+      x_max = np.max(self.embedded_c[:,0])
+      x_min = np.min(self.embedded_c[:,0])
+      y_max = np.max(self.embedded_c[:,1])
+      y_min = np.min(self.embedded_c[:,1])
+      x_mid = (x_max+x_min)/2
+      y_mid = (y_max+y_min)/2
+      scalex = (x_max-x_min)*1.0
+      scaley = (y_max-y_min)*1.0
+      self.embedded_c[:,0] = ((self.embedded_c[:,0]-x_mid)/scalex+0.5)*img_size
+      self.embedded_c[:,1] = ((self.embedded_c[:,1]-y_mid)/scaley+0.5)*img_size
+
+      if not use_precomputed_tsne:
+        #render
+        print("rendering...")
+        plt = np.full([img_size+self.real_size,img_size+self.real_size],255,np.uint8)
+        for i in tqdm(range(self.n_content)):
+          tmpvox = get_vox_from_binvox_1over2(os.path.join(self.data_content_dir,self.dataset_names[i]+"/model_depth_fusion.binvox")).astype(np.uint8)
+
+          rendered_view = self.voxel_renderer.render_img_with_camera_pose_gpu(tmpvox, self.sampling_threshold_c)
+          img_x = int(self.embedded_c[i,0])
+          img_y = int(self.embedded_c[i,1])
+          plt[img_y:img_y+self.real_size,img_x:img_x+self.real_size] = np.minimum(plt[img_y:img_y+self.real_size,img_x:img_x+self.real_size], rendered_view)
+        cv2.imwrite(config.sample_dir+"/"+"latent_content_gz.png", plt)
+        print("rendering...complete")
+      else:
+        #load rendered
+        plt = cv2.imread(config.sample_dir+"/"+"latent_content_gz.png", cv2.IMREAD_UNCHANGED)
+    
+      plt = cv2.resize(plt, (UI_height,UI_height))
+      plt[0,:] = 205
+      plt[-1,:] = 205
+      plt[:,0] = 205
+      plt[:,-1] = 205
+      plt = np.reshape(plt,[UI_height,UI_height])
+      
+      self.embedded_c[:,0] = (self.embedded_c[:,0] +half_real_size)*rescale_factor
+      self.embedded_c[:,1] = (self.embedded_c[:,1] +half_real_size)*rescale_factor
+
+      self.z_vector_weights = np.zeros([self.n_content],np.float32)
+      self.z_vector_weights[0] = 1 
+      
+      tri = Delaunay(self.embedded_c)
+      self.tri_index_c = tri.simplices
+      points_idxs = np.linspace(0, UI_height-1, UI_height, dtype = np.float32)
+      points_x, points_y = np.meshgrid(points_idxs, points_idxs, sparse=False, indexing='ij')
+      points_x = np.reshape(points_x, [UI_height*UI_height,1])
+      points_y = np.reshape(points_y, [UI_height*UI_height,1])
+      points = np.concatenate([points_y,points_x], 1)
+      row_idx = tri.find_simplex(points)
+      X = tri.transform[row_idx, :2]
+      Y = points - tri.transform[row_idx, 2]
+      b = np.einsum('...jk,...k->...j', X, Y)
+      self.bcoords_c = np.c_[b, 1-b.sum(axis=1)]
+      self.bcoords_c = np.reshape(self.bcoords_c, [UI_height,UI_height,3])
+      self.row_idx_c = np.reshape(row_idx, [UI_height,UI_height])
+
+      return plt
+    
+  
+    def launch_combined_ui(self, config):
+      sys.path.append('..')
+      import generating_3d_meshes.model as model
+      sys.path.append('/DECOR-GAN')
+      
+      self.device = torch.device('cpu')
+      self.content_gen_model = model
+      self.g_content_net = self.content_gen_model.g_net.to(self.device)
+      self.g_content_net.load_state_dict(torch.load('../generating_3d_meshes/results/img_res_27/saved_G_model.pth'))
+      self.combined_ui = True
+      
+      self.voxel_renderer.use_gpu()
+      
+      zspace_img = self.ui_setup(config, True)
+      zspace_content_img = self.content_ui_setup(config, True)
+      
+      window = tk.Tk(className='DECOR-GAN zspace explorer')
+      window.configure(bg="#F1F1F1")
+      
+      # z space Image
+      zspace_img = Image.fromarray(zspace_img)
+      imgtk = ImageTk.PhotoImage(image=zspace_img)
+      canvas = tk.Canvas(window, width=1000, height=1000)
+      canvas.config(bd=0, highlightthickness=0)
+      self.img_canvas = ImgCanvas(canvas, imgtk)
+      
+      # z space Image
+      zspace_content_img = Image.fromarray(zspace_content_img)
+      imgtk = ImageTk.PhotoImage(image=zspace_content_img)
+      canvas_cont = tk.Canvas(window, width=1000, height=1000)
+      canvas_cont.config(bd=0, highlightthickness=0)
+      self.img_content_canvas = ImgCanvas(canvas_cont, imgtk)
+      
+      canvas.grid(column=5, row=0, rowspan=3, columnspan=3)
+      
+      canvas_cont.grid(column=0, row=0, rowspan=3, columnspan=3)
+      
+
+      def onMouseMove(event):
+        self.img_canvas.onMouseMove(event)
+        self.img_content_canvas.onMouseMove(event)
+        if self.img_canvas.moved:
+          self.img_canvas.moved = False
+          self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+          self.update_z_img()
+        if self.img_content_canvas.moved:
+          self.img_content_canvas.moved = False
+          self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+          self.update_content_z_img()
+
+      def onMouseDown(event):
+        self.img_canvas.onMouseDown(event)
+        self.img_content_canvas.onMouseDown(event)
+        if self.img_canvas.moved:
+          self.img_canvas.moved = False
+          self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+          self.update_z_img()
+        if self.img_content_canvas.moved:
+          self.img_content_canvas.moved = False
+          self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+          self.update_content_z_img()
+        
+      def onMouseUp(event):
+        self.img_canvas.onMouseUp(event)
+        self.img_content_canvas.onMouseUp(event)
+        if self.img_canvas.moved:
+          self.img_canvas.moved = False
+          self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+          self.update_z_img()
+        if self.img_content_canvas.moved:
+          self.img_content_canvas.moved = False
+          self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+          self.update_content_z_img()
+        self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+        self.update_z_img()
+      
+      window.bind('<Motion>', onMouseMove)
+      window.bind("<ButtonPress-1>", onMouseDown)
+      window.bind("<ButtonRelease-1>", onMouseUp)
+      
+      # Rendered content image
+      self.update_content_zvec(self.img_content_canvas.dot_loc[0], self.img_content_canvas.dot_loc[1])
+      z_img_c = self.render_content(bg=241)
+      z_img_c = Image.fromarray(z_img_c)
+      imgtk_z_c = ImageTk.PhotoImage(image=z_img_c)
+      self.z_content_img_tk = tk.Label(window, image=imgtk_z_c)
+      self.z_content_img_tk.config(bd=0, highlightthickness=0)
+      self.z_content_img_tk.grid(column=3, row=2, rowspan=2, columnspan=2)
+      
+      # Rendered image
+      self.update_zvec(self.img_canvas.dot_loc[0], self.img_canvas.dot_loc[1])
+      z_img = self.render_style(self.z_vector, bg=241)
+      z_img = Image.fromarray(z_img)
+      imgtk_z = ImageTk.PhotoImage(image=z_img)
+      self.z_img_tk = tk.Label(window, image=imgtk_z)
+      self.z_img_tk.config(bd=0, highlightthickness=0)
+      self.z_img_tk.grid(column=3, row=0, rowspan=2, columnspan=2)
+
+      window.resizable(False,False)
+      window.mainloop()

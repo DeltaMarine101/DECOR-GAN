@@ -141,7 +141,7 @@ def write_obj_triangle(name, vertices, triangles):
 
 
 class voxel_renderer:
-    def __init__(self, render_IO_vox_size=256, render_boundary_padding_size=16):
+    def __init__(self, render_IO_vox_size=256, render_boundary_padding_size=32):
         self.render_IO_vox_size = render_IO_vox_size
         self.render_boundary_padding_size = render_boundary_padding_size
         self.render_fix_vox_size = self.render_IO_vox_size + self.render_boundary_padding_size*2
@@ -301,7 +301,7 @@ class voxel_renderer:
         return output
 
 
-    def render_img_with_camera_pose(self, voxel_in, threshold, cam_alpha = 0.785, cam_beta = 0.785, get_depth = False, processed = False, ray_x = 0, ray_y = 0, ray_z = 1, steep_threshold = 16):
+    def render_img_with_camera_pose(self, voxel_in, threshold, cam_alpha = 0.785, cam_beta = 0.785, get_depth = False, processed = False, ray_x = 0, ray_y = 0, ray_z = 1, steep_threshold = 16, bg=255):
         imgsize = voxel_in.shape[0]
 
         if processed:
@@ -411,6 +411,7 @@ class voxel_renderer:
 
             output = output*220 + (1-mask[1:-1,1:-1])*256
             output = output[self.render_boundary_padding_size-1:-self.render_boundary_padding_size+1,self.render_boundary_padding_size-1:-self.render_boundary_padding_size+1]
+            output[output == 255] = bg
             output = np.clip(output, 0,255).astype(np.uint8)
 
         return output
@@ -458,7 +459,7 @@ class voxel_renderer:
 
         new_xyz_tensor = torch.cat([new_x_tensor.unsqueeze(3),new_y_tensor.unsqueeze(3),new_z_tensor.unsqueeze(3)], 3).unsqueeze(0)
 
-        voxel_tensor = F.grid_sample(voxel_tensor, new_xyz_tensor, mode='bilinear', padding_mode='zeros').squeeze()
+        voxel_tensor = F.grid_sample(voxel_tensor, new_xyz_tensor, mode='bilinear', padding_mode='zeros', align_corners=False).squeeze()
         voxel_tensor = voxel_tensor>threshold
         mask, depth = torch.max(voxel_tensor,0)
 

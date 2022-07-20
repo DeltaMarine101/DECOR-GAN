@@ -6,3 +6,7 @@
 /venv36
 /build
 /__pycache__
+/checkpoint
+/eval_output
+Clsshapenet_*.pth
+precomputed_*.hdf5

@@ -189,7 +189,8 @@ def compute_FID_for_real(config):
 
     class_num = 24
 
-    data_dir = config.data_dir
+    data_content_dir = config.data_content_dir
+    data_style_dir = config.data_style_dir
 
     #load style shapes
     fin = open("splits/"+config.data_style+".txt")
@@ -221,9 +222,9 @@ def compute_FID_for_real(config):
     for content_id in range(dataset_len):
         print("processing content - "+str(content_id+1)+"/"+str(dataset_len))
         if config.output_size==128:
-            tmp_raw = get_vox_from_binvox_1over2_return_small(os.path.join(data_dir,dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+            tmp_raw = get_vox_from_binvox_1over2_return_small(os.path.join(data_content_dir,dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
         elif config.output_size==256:
-            tmp_raw = get_vox_from_binvox(os.path.join(data_dir,dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+            tmp_raw = get_vox_from_binvox(os.path.join(data_content_dir,dataset_names[content_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
 
         voxels = torch.from_numpy(tmp_raw).to(device).unsqueeze(0).unsqueeze(0).float()
         _, z = Clsshapenet(voxels)
@@ -233,9 +234,9 @@ def compute_FID_for_real(config):
     for style_id in range(max_num_of_styles):
         print("processing style - "+str(style_id+1)+"/"+str(styleset_len))
         if config.output_size==128:
-            tmp_raw = get_vox_from_binvox_1over2_return_small(os.path.join(data_dir,styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+            tmp_raw = get_vox_from_binvox_1over2_return_small(os.path.join(data_style_dir,styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
         elif config.output_size==256:
-            tmp_raw = get_vox_from_binvox(os.path.join(data_dir,styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
+            tmp_raw = get_vox_from_binvox(os.path.join(data_style_dir,styleset_names[style_id]+"/model_depth_fusion.binvox")).astype(np.uint8)
 
         voxels = torch.from_numpy(tmp_raw).to(device).unsqueeze(0).unsqueeze(0).float()
         _, z = Clsshapenet(voxels)
